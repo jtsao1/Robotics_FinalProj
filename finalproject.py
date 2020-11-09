@@ -17,6 +17,7 @@ class Run:
             factory (factory.FactoryCreate)
         """
         self.create = factory.create_create()
+        x_init = self.create.sim_get_position()
         self.time = factory.create_time_helper()
         self.servo = factory.create_servo()
         self.sonar = factory.create_sonar()
@@ -50,7 +51,7 @@ class Run:
             if start + time_in_sec <= t:
                 break
 
-    def go_to_angle(self, goal_theta):
+    def go_to_angle(self, goal_theta): # turn to angle in place, moves pf
         old_x = self.odometry.x
         old_y = self.odometry.y
         old_theta = self.odometry.theta
@@ -63,7 +64,7 @@ class Run:
         self.create.drive_direct(0, 0)
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
 
-    def forward(self):
+    def forward(self): # moves forward 0.5, moves pf
         old_x = self.odometry.x
         old_y = self.odometry.y
         old_theta = self.odometry.theta
@@ -84,7 +85,7 @@ class Run:
             self.sleep(0.01)
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
 
-    def visualize(self):
+    def visualize(self): # shows bot estimates and pf updates
         x, y, theta = self.pf.get_estimate()
         self.virtual_create.set_pose((x, y, 0.1), theta)
         data = []
@@ -106,16 +107,56 @@ class Run:
 
         # request sensors
         self.create.start_stream([
-            pyCreate2.Sensor.LeftEncoderCounts,
-            pyCreate2.Sensor.RightEncoderCounts,
+            create2.Sensor.LeftEncoderCounts,
+            create2.Sensor.RightEncoderCounts,
         ])
         self.visualize()
         self.virtual_create.enable_buttons()
         self.visualize()
-		
+
         self.arm.go_to(4, math.radians(-90))
         self.time.sleep(4)
 
+        '''
+        ' 1 - FIND PATH
+        '''
+        # build rrt
+        x_init = self.create.sim_get_position()
+        print("bot initial pos: " + str(x_init))
+        x_mapInit = [x_init[0]*100, 300 - x_init[1]*100]
+        self.rrt.build(x_mapInit, 3000, 8)
+        # given arm position & dimensions
+        L0 = 0.31
+        L1 = 0.4
+        L2 = 0.39
+        Lgrip = 0.16
+        armPos = [1.6, 3.4]  # arm(x,y)
+        # calculate x_goal for robot
+        d2wall = 0.3 # set end distance to wall=0.3
+        x_goal = armPos
+        if armPos[0] < 0:
+            x_goal[0] = d2wall
+        elif armPos[1] < 0:
+            x_goal[1] = d2wall
+        elif armPos[0] > 3:
+            x_goal[0] = 3-d2wall
+        elif armPos[1] > 3:
+            x_goal[1] = 3-d2wall
+        x_goal = [x_goal[0]*100, 300-x_goal[1]*100]
+        # print("x_goal: " + str(x_goal))
+        x_mapGoal = self.rrt.nearest_neighbor(x_goal)
+        # print("x_mapG: " + str(x_mapGoal.state))
+        path = self.rrt.shortest_path(x_mapGoal)
+        for idx in range(0, len(path)-1):
+            self.map.draw_line((path[idx].state[0], path[idx].state[1]), (path[idx+1].state[0], path[idx+1].state[1]), (0,255,0))
+        self.map.save("fp_rrt.png")
+
+        self.odometry.x = x_init[0];
+        self.odometry.y = x_init[1];
+
+        self.time.sleep(10);
+
+'''
         while True:
             b = self.virtual_create.get_last_button()
             if b == self.virtual_create.Button.MoveForward:
@@ -132,14 +173,13 @@ class Run:
                 print(distance)
                 self.pf.measure(distance, 0)
                 self.visualize()
-				
-            #posC = self.create.sim_get_position()
-				
-            #print(posC)
-			
+
+
+
             self.arm.go_to(4, math.radians(-90))
             self.arm.go_to(5, math.radians(90))
             self.time.sleep(100)
 
 
             self.time.sleep(0.01)
+'''

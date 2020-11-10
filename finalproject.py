@@ -30,7 +30,7 @@ class Run:
         self.rrt = rrt.RRT(self.map)
 
         # TODO identify good PID controller gains
-        self.pidTheta = pid_controller.PIDController(200, 0, 100, [-10, 10], [-50, 50], is_angle=True)
+        self.pidTheta = pid_controller.PIDController(300, 5, 50, [-10, 10], [-200, 200], is_angle=True)
         # TODO identify good particle filter parameters
         self.pf = particle_filter.ParticleFilter(self.mapJ, 1000, 0.06, 0.15, 0.2)
 
@@ -110,9 +110,9 @@ class Run:
             create2.Sensor.LeftEncoderCounts,
             create2.Sensor.RightEncoderCounts,
         ])
-        self.visualize()
-        self.virtual_create.enable_buttons()
-        self.visualize()
+        # self.visualize()
+        # self.virtual_create.enable_buttons()
+        # self.visualize()
 
         self.arm.go_to(4, math.radians(-90))
         self.time.sleep(4)
@@ -143,18 +143,50 @@ class Run:
         elif armPos[1] > 3:
             x_goal[1] = 3-d2wall
         x_goal = [x_goal[0]*100, 300-x_goal[1]*100]
-        # print("x_goal: " + str(x_goal))
         x_mapGoal = self.rrt.nearest_neighbor(x_goal)
-        # print("x_mapG: " + str(x_mapGoal.state))
         path = self.rrt.shortest_path(x_mapGoal)
         for idx in range(0, len(path)-1):
             self.map.draw_line((path[idx].state[0], path[idx].state[1]), (path[idx+1].state[0], path[idx+1].state[1]), (0,255,0))
         self.map.save("fp_rrt.png")
 
-        self.odometry.x = x_init[0];
-        self.odometry.y = x_init[1];
+        '''
+        ' 2 - FOLLOW PATH
+        '''
+        self.odometry.x = x_init[0]
+        self.odometry.y = x_init[1]
+
+        base_speed = 70
+        it = 0
+
+        for p in path:
+            it+=1
+            goal_x = p.state[0] / 100.0 # conversion between px -> m
+            goal_y = 3 - p.state[1] / 100.0 ###### NOT SURE WHAT 3.35 IS
+            print("goto_", goal_x, goal_y)
+            while True:
+                state = self.create.update()
+                if state is not None:
+                    # go to p(x,y) in path - ODOMETRY -
+                    self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
+                    goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+                    theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
+                    output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+                    self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
+                    # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
+
+                    # stop when close enough
+                    distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
+                    if distance < 0.05:
+                        break
+            '''
+            ' 2.5 - LOCALIZE
+            '''
+            # if it%5==0:  # update PF every 5 pathfollows
+
+
 
         self.time.sleep(10);
+
 
 '''
         while True:

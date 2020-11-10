@@ -51,6 +51,24 @@ class Run:
             if start + time_in_sec <= t:
                 break
 
+    def go_to_goal(self, goal_x, goal_y):
+        old_x = self.odometry.x
+        old_y = self.odometry.y
+        old_theta = self.odometry.theta
+        base_speed = 100
+        while math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2)) > 0.05:
+            state = self.create.update()
+            if state is not None:
+                # go to p(x,y) in path - ODOMETRY -
+                self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
+                goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+                theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
+                output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+                self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
+                # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
+        self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
+        # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
+
     def go_to_angle(self, goal_theta): # turn to angle in place, moves pf
         old_x = self.odometry.x
         old_y = self.odometry.y
@@ -110,9 +128,9 @@ class Run:
             create2.Sensor.LeftEncoderCounts,
             create2.Sensor.RightEncoderCounts,
         ])
-        # self.visualize()
-        # self.virtual_create.enable_buttons()
-        # self.visualize()
+        self.visualize()
+        self.virtual_create.enable_buttons()
+        self.visualize()
 
         self.arm.go_to(4, math.radians(-90))
         self.time.sleep(4)
@@ -155,37 +173,41 @@ class Run:
         self.odometry.x = x_init[0]
         self.odometry.y = x_init[1]
 
-        base_speed = 70
+        base_speed = 100
         it = 0
-
+        prevEstimate = x_init
         for p in path:
             it+=1
             goal_x = p.state[0] / 100.0 # conversion between px -> m
             goal_y = 3 - p.state[1] / 100.0 ###### NOT SURE WHAT 3.35 IS
-            print("goto_", goal_x, goal_y)
-            while True:
-                state = self.create.update()
-                if state is not None:
-                    # go to p(x,y) in path - ODOMETRY -
-                    self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
-                    goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
-                    theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
-                    output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
-                    self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
-                    # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
+            # print("goto_", goal_x, goal_y)
+            self.go_to_goal(goal_x, goal_y)
 
-                    # stop when close enough
-                    distance = math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2))
-                    if distance < 0.05:
-                        break
             '''
             ' 2.5 - LOCALIZE
             '''
-            # if it%5==0:  # update PF every 5 pathfollows
+            if it%5==0 :  # update PF every 5 pathfollows
+                print("@ [{},{}]".format(self.odometry.x, self.odometry.y))
+                distance = self.sonar.get_distance()
+                self.pf.measure(distance, 0)
+                self.visualize()
+                est = self.pf.get_estimate()
+                print("PF estimate: ", est[0], est[1])
+                updated = False
+                # if estimated position is "close enough" to odometry (x,y)
+                # odometry (x,y) get updated to match PF estimate
+                    # close enough = 5cm apart
+                if abs(est[0]-self.odometry.x)<0.05:
+                    self.odometry.x = est[0]
+                    updated = True
+                if abs(est[1]-self.odometry.y)<0.05:
+                    self.odometry.y = est[1]
+                    updated = True
+                if updated is True:
+                    print("UPDATE ", self.odometry.x, self.odometry.y)
 
-
-
-        self.time.sleep(10);
+        self.create.drive_direct(0, 0)
+        self.time.sleep(10)
 
 
 '''

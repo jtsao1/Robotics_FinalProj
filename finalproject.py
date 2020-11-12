@@ -69,6 +69,47 @@ class Run:
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
         # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
 
+    def go_to_goal_precise(self, goal_x, goal_y):
+        old_x = self.odometry.x
+        old_y = self.odometry.y
+        old_theta = self.odometry.theta
+        base_speed = 10
+        i = 0
+        while math.sqrt(math.pow(goal_x - self.odometry.x, 2) + math.pow(goal_y - self.odometry.y, 2)) > 0.01:
+            state = self.create.update()
+            i += 1
+            if state is not None:
+                self.odometry.update(state.leftEncoderCounts, state.rightEncoderCounts)
+                goal_theta = math.atan2(goal_y - self.odometry.y, goal_x - self.odometry.x)
+                theta = math.atan2(math.sin(self.odometry.theta), math.cos(self.odometry.theta))
+                output_theta = self.pidTheta.update(self.odometry.theta, goal_theta, self.time.time())
+                self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
+                ''' LOCALIZE '''
+                if i%30==0:
+                    self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
+                    distance = self.sonar.get_distance()
+                    self.pf.measure(distance, 0)
+                    self.visualize()
+                    est = self.pf.get_estimate()
+                    print("oooooooodom: [", format(self.odometry.x, ".4f"),format(self.odometry.y, ".4f"),"]")
+                    print("PF estimate: [", format(est[0], ".4f"),format(est[1], ".4f"),"]")
+                    updated = False
+                    # if estimated position is "close enough" to odometry (x,y)
+                    # odometry (x,y) get updated to match PF estimate
+                        # close enough = 5cm apart
+                    if abs(est[0]-self.odometry.x)<0.01:
+                        self.odometry.x = est[0]
+                        updated = True
+                    if abs(est[1]-self.odometry.y)<0.01:
+                        self.odometry.y = est[1]
+                        updated = True
+                    if updated is True:
+                        print("UPDATE ", self.odometry.x, self.odometry.y)
+                    old_x = self.odometry.x
+                    old_y = self.odometry.y
+                    old_theta = self.odometry.theta
+
+
     def go_to_angle(self, goal_theta): # turn to angle in place, moves pf
         old_x = self.odometry.x
         old_y = self.odometry.y
@@ -121,7 +162,7 @@ class Run:
 
         self.time.sleep(4)
 
-        #self.arm.close_gripper()
+        self.arm.close_gripper()
 
         # request sensors
         self.create.start_stream([
@@ -140,9 +181,9 @@ class Run:
         '''
         # build rrt
         x_init = self.create.sim_get_position()
-        print("bot initial pos: " + str(x_init))
+        print("bot initial pos: [",format(x_init[0], ".4f"),format(x_init[1], ".4f"),"]")
         x_mapInit = [x_init[0]*100, 300 - x_init[1]*100]
-        self.rrt.build(x_mapInit, 3000, 8)
+        self.rrt.build(x_mapInit, 3000, 40)
         # given arm position & dimensions
         L0 = 0.31
         L1 = 0.4
@@ -160,12 +201,17 @@ class Run:
             x_goal[0] = 3-d2wall
         elif armPos[1] > 3:
             x_goal[1] = 3-d2wall
-        x_goal = [x_goal[0]*100, 300-x_goal[1]*100]
-        x_mapGoal = self.rrt.nearest_neighbor(x_goal)
+        x_goalpx = [x_goal[0]*100, 300-x_goal[1]*100] # actual desired end point
+        x_mapGoal = self.rrt.nearest_neighbor(x_goalpx)
         path = self.rrt.shortest_path(x_mapGoal)
+        for v in self.rrt.T:
+            for u in v.neighbors:
+                self.map.draw_line((v.state[0], v.state[1]), (u.state[0], u.state[1]), (0,0,0))
+
         for idx in range(0, len(path)-1):
             self.map.draw_line((path[idx].state[0], path[idx].state[1]), (path[idx+1].state[0], path[idx+1].state[1]), (0,255,0))
         self.map.save("fp_rrt.png")
+        # print("path steps == " + str(len(path)))
 
         '''
         ' 2 - FOLLOW PATH
@@ -186,13 +232,13 @@ class Run:
             '''
             ' 2.5 - LOCALIZE
             '''
-            if it%5==0 :  # update PF every 5 pathfollows
-                print("@ [{},{}]".format(self.odometry.x, self.odometry.y))
+            if it%3==0 :  # update PF every 3 pathfollows
+                print("oooooooodom: [", format(self.odometry.x, ".4f"),format(self.odometry.y, ".4f"),"]")
                 distance = self.sonar.get_distance()
                 self.pf.measure(distance, 0)
                 self.visualize()
                 est = self.pf.get_estimate()
-                print("PF estimate: ", est[0], est[1])
+                print("PF estimate: [", format(est[0], ".4f"),format(est[1], ".4f"),"]")
                 updated = False
                 # if estimated position is "close enough" to odometry (x,y)
                 # odometry (x,y) get updated to match PF estimate
@@ -204,7 +250,14 @@ class Run:
                     self.odometry.y = est[1]
                     updated = True
                 if updated is True:
-                    print("UPDATE ", self.odometry.x, self.odometry.y)
+                    print("PF UPDATE ODOM -", format(self.odometry.x, ".4f"),format(self.odometry.y, ".4f"))
+
+
+        goal_x = x_goal[0]
+        goal_y = x_goal[1]
+        print(x_goal)
+        self.go_to_goal_precise(goal_x, goal_y)
+        print("odometry loc = (",format(self.odometry.x, ".4f"),format(self.odometry.y, ".4f"),")")
 
         self.create.drive_direct(0, 0)
         self.time.sleep(10)

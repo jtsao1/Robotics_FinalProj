@@ -115,19 +115,15 @@ class ParticleFilter:
     def get_effectiness(self):
         return self.eff
 
-    def need_update(self, it, path_len):
-        con = self.get_converge()
-        eff = self.get_effectiness()
+    def need_update(self):
+        #con = self.get_converge()
+
         #confidence of the particle filtering
         #how converge is the particle filter
-        print("error", con, "eff", eff)
-        #return (con < 0.08 and eff < 150) or (con < 0.02)
-        factor = 0.13 /((path_len ** 2) / 4)
-        eq = -it * factor *(it - path_len)
-        eq = min(eq, 0.090)
-        print(eq)
 
-        if it < 3 or it > (path_len - 3):
-            return False
-        else:
-            return eff < len(self._particles) * 0.45
+        #return (con < 0.08 and eff < 150) or (con < 0.02)
+        #factor = 0.13 /((path_len ** 2) / 4)
+        #eq = -it * factor *(it - path_len)
+        #eq = min(eq, 0.090)
+        #print(eq)
+        return self.eff < len(self._particles) * 0.45

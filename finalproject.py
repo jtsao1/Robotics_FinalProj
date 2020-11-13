@@ -35,8 +35,6 @@ class Run:
         # TODO identify good particle filter parameters
         self.pf = particle_filter.ParticleFilter(self.mapJ, 600, (*self.create.sim_get_position(), 0))
 
-        self.joint_angles = np.zeros(7)
-
     def sleep(self, time_in_sec):
         """Sleeps for the specified amount of time while keeping odometry up-to-date
         Args:
@@ -123,21 +121,23 @@ class Run:
             self.update_odo()
             self.visualize()
             angle += 45
-        self.servo.go_to(0)
+        self.servo.go_to(0)     #servo return back to default position
         self.time.sleep(1.0)
 
     def update_odo(self, it = 4, path_len = 100, always_update = False):
+        # it and path_len are used in the particles filter
         est = self.pf.get_estimate()
-        if always_update:
+        if always_update:   #only used when approaching
+            self.odometry.x += (est[0] - self.odometry.x )/4
+            self.odometry.y += (est[1] - self.odometry.y )/4
+            self.odometry.theta += (est[2] - self.odometry.theta )/4
+            print("UPDATE")
+        elif self.pf.need_update() and  (3 < it < (path_len - 3)):     #used during the path following to avoid obstacles
             self.odometry.x += (est[0] - self.odometry.x )/2
             self.odometry.y += (est[1] - self.odometry.y )/2
             self.odometry.theta += (est[2] - self.odometry.theta )/2
             print("UPDATE")
-        elif self.pf.need_update(it, path_len):
-            self.odometry.x += (est[0] - self.odometry.x )/2
-            self.odometry.y += (est[1] - self.odometry.y )/2
-            self.odometry.theta += (est[2] - self.odometry.theta )/2
-            print("UPDATE")
+        print(self.pf.get_effectiness())
         print("@ [{},{}]".format(self.odometry.x, self.odometry.y))
         self.create.sim_get_position()
         print("Actual ", self.create.sim_get_position())
@@ -173,15 +173,15 @@ class Run:
         Lgrip = 0.16
         armPos = [1.6, 3.4]  # arm(x,y)
         # calculate x_goal for robot
-        d2wall = 0.6 # set end distance to wall=0.8 (inside maze)
-        offset = 0.4 # an offset
-        x_goal = armPos[:]  #goal location of rrt
-        x_final = armPos[:] #goal location that is reachable from arm
+        d2wall = 0.6 # set end distance to wall=0.8 (inside maze, from wall to robot)
+        offset = 0.4 # set end distance to wall=0.4, where
+        x_goal = armPos[:]  #goal location of rrt (x,y, theta)
+        x_final = armPos[:] #goal location that is reachable from arm (x,y)
         appraoch_pos = None # an iterable that returns the approching location
-        approach_step = 0.05
+        approach_step = 0.05    #step length for each approaching step
         if armPos[0] < 0:
             x_goal[0] = d2wall  #left side of the maze
-            x_goal.append(math.pi)
+            x_goal.append(math.pi)  # goal theta
             x_final[0] = offset
             approach_pos = [(i, x_goal[1]) for i in np.arange(x_final[0], x_goal[0], -approach_step)]
         elif armPos[1] < 0:
@@ -204,10 +204,10 @@ class Run:
         x_pixel_goal = [x_goal[0]*100, 300-x_goal[1]*100] #convert to pixel size
         #x_mapGoal = self.rrt.nearest_neighbor(x_pixel_goal)
         path = self.rrt.shortest_path(x_pixel_goal)
-        for v in self.rrt.tree:
+        for v in self.rrt.tree:             # draw the tree
             for u in v.neighbors:
                 self.map.draw_line((v.state[0], v.state[1]), (u.state[0], u.state[1]), (0,0,0))
-        for idx in range(0, len(path)-1):
+        for idx in range(0, len(path)-1):           # draw the path
             self.map.draw_line((path[idx][0], path[idx][1]), (path[idx+1][0], path[idx+1][1]), (0,255,0))
         self.map.save("fp_rrt.png")
 
@@ -219,7 +219,6 @@ class Run:
 
         base_speed = 100
         it = 0   # steps until updating PF
-        prevEstimate = x_init
         for p in path:
             it+=1
             goal_x = p[0] / 100.0 # conversion between px -> m
@@ -231,7 +230,7 @@ class Run:
             ' 2.5 - LOCALIZE
             '''
             distance = self.sonar.get_distance()
-            if distance != 3.33:
+            if distance != 3.33:                # invalid reading
                 self.pf.measure(distance, 0)
             self.visualize()
             self.update_odo(it, len(path))
@@ -240,10 +239,11 @@ class Run:
         ' 2.7 - APPROACHING
         '''
         self.create.drive_direct(0, 0)
-        self.take_measurements()
+        self.take_measurements()    #rotate servo 180degrees around and measure
         # go to final location
         self.go_to_angle(x_goal[2])
         self.take_measurements()
+        self.go_to_angle(x_goal[2])
         for x,y in appraoch_pos:
             self.go_to_goal(x, y)
             distance = self.sonar.get_distance()
@@ -261,14 +261,14 @@ class Run:
         ' 3 - ARM Ops
         '''
         cup_height = 0.18
-        d2reach = 0
+        d2reach = 0     #used for inverser kinematics
         if armPos[0] < 0 or armPos[0] > 3:
             d2reach = abs(self.odometry.x - armPos[0])  #left/right side of the maze
         elif armPos[1] < 0 or armPos[1] > 3:
             d2reach = abs(self.odometry.y - armPos[1])  #bottom/top side of the maze
 
         #pass robot location to arm
-        #(y+wall-distance, cup_height)
+        #(x/y+wall-distance, cup_height)
         self.myarm.inverse_kinematics(d2reach, cup_height)
         self.time.sleep(2)
 
@@ -278,18 +278,12 @@ class Run:
         self.myarm.level_effector(True)
         self.time.sleep(2)
 
-        #self.myarm.smooth_goto(0, 0)
-        #self.time.sleep(2)
-
-        #self.myarm.inverse_kinematics(0.2, 1.2, True)
-        #self.time.sleep(2)
-        self.myarm.inverse_kinematics(-0.3, 1.2, True)
+        self.myarm.inverse_kinematics(-0.3, 1.2, True)  #shelf 2
         self.time.sleep(2)
         self.myarm.smooth_rotation(math.radians(-180))
         self.time.sleep(2)
-        #self.myarm.inverse_kinematics(-0.25, 1.35)
-        #self.myarm.inverse_kinematics(-0.3, 0.9, True)
-        #self.time.sleep(2)
+        #self.myarm.inverse_kinematics(-0.25, 1.35)   #shelf 3
+        #self.myarm.inverse_kinematics(-0.3, 0.9, True)   #shelf 1
 
         self.arm.open_gripper()
         self.time.sleep(20)

@@ -7,7 +7,7 @@ import rrt_map
 import particle_filter
 import rrt
 import numpy as np
-
+import my_arm
 
 
 class Run:
@@ -22,6 +22,7 @@ class Run:
         self.servo = factory.create_servo()
         self.sonar = factory.create_sonar()
         self.arm = factory.create_kuka_lbr4p()
+        self.myarm = my_arm.my_arm(self.arm, self.time)
         self.virtual_create = factory.create_virtual_create()
         # self.virtual_create = factory.create_virtual_create("192.168.1.XXX")
         self.odometry = odometry.Odometry()
@@ -32,7 +33,7 @@ class Run:
         # TODO identify good PID controller gains
         self.pidTheta = pid_controller.PIDController(300, 5, 50, [-10, 10], [-200, 200], is_angle=True)
         # TODO identify good particle filter parameters
-        self.pf = particle_filter.ParticleFilter(self.mapJ, 1000, 0.06, 0.15, 0.2)
+        self.pf = particle_filter.ParticleFilter(self.mapJ, 600, (*self.create.sim_get_position(), 0))
 
         self.joint_angles = np.zeros(7)
 
@@ -67,6 +68,7 @@ class Run:
                 self.create.drive_direct(int(base_speed+output_theta), int(base_speed-output_theta))
                 # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
         self.pf.move_by(self.odometry.x - old_x, self.odometry.y - old_y, self.odometry.theta - old_theta)
+        self.create.drive_direct(0 , 0)
         # print("[{},{},{}]".format(self.odometry.x, self.odometry.y, math.degrees(self.odometry.theta)))
 
     def go_to_angle(self, goal_theta): # turn to angle in place, moves pf
@@ -109,40 +111,61 @@ class Run:
         data = []
         for particle in self.pf._particles:
             data.extend([particle.x, particle.y, 0.1, particle.theta])
-        self.virtual_create.set_point_cloud(data)
+        #self.virtual_create.set_point_cloud(data)
+
+    def take_measurements(self):
+        angle = -90
+        while angle <= 90:
+            self.servo.go_to(angle)
+            self.time.sleep(2.0)
+            distance = self.sonar.get_distance()
+            self.pf.measure(distance, math.radians(angle))
+            self.update_odo()
+            self.visualize()
+            angle += 45
+        self.servo.go_to(0)
+        self.time.sleep(1.0)
+
+    def update_odo(self, it = 4, path_len = 100, always_update = False):
+        est = self.pf.get_estimate()
+        if always_update:
+            self.odometry.x += (est[0] - self.odometry.x )/2
+            self.odometry.y += (est[1] - self.odometry.y )/2
+            self.odometry.theta += (est[2] - self.odometry.theta )/2
+            print("UPDATE")
+        elif self.pf.need_update(it, path_len):
+            self.odometry.x += (est[0] - self.odometry.x )/2
+            self.odometry.y += (est[1] - self.odometry.y )/2
+            self.odometry.theta += (est[2] - self.odometry.theta )/2
+            print("UPDATE")
+        print("@ [{},{}]".format(self.odometry.x, self.odometry.y))
+        self.create.sim_get_position()
+        print("Actual ", self.create.sim_get_position())
+        print()
 
     def run(self):
         self.create.start()
         self.create.safe()
-
-        self.create.drive_direct(0, 0)
-
         self.arm.open_gripper()
-
-        self.time.sleep(4)
-
-        #self.arm.close_gripper()
-
+        self.create.drive_direct(0, 0)
         # request sensors
         self.create.start_stream([
             create2.Sensor.LeftEncoderCounts,
             create2.Sensor.RightEncoderCounts,
         ])
         self.visualize()
-        self.virtual_create.enable_buttons()
-        self.visualize()
+        #self.virtual_create.enable_buttons()
 
-        self.arm.go_to(4, math.radians(-90))
-        self.time.sleep(4)
 
         '''
         ' 1 - FIND PATH
         '''
         # build rrt
         x_init = self.create.sim_get_position()
+        print(x_init)
         print("bot initial pos: " + str(x_init))
         x_mapInit = [x_init[0]*100, 300 - x_init[1]*100]
-        self.rrt.build(x_mapInit, 3000, 8)
+        self.rrt.build(x_mapInit, 650, 20)      #(starting location, iteration, step length)
         # given arm position & dimensions
         L0 = 0.31
         L1 = 0.4
@@ -150,21 +173,42 @@ class Run:
         Lgrip = 0.16
         armPos = [1.6, 3.4]  # arm(x,y)
         # calculate x_goal for robot
-        d2wall = 0.3 # set end distance to wall=0.3
-        x_goal = armPos
+        d2wall = 0.6 # set end distance to wall=0.8 (inside maze)
+        offset = 0.4 # an offset
+        x_goal = armPos[:]  #goal location of rrt
+        x_final = armPos[:] #goal location that is reachable from arm
+        appraoch_pos = None # an iterable that returns the approching location
+        approach_step = 0.05
         if armPos[0] < 0:
-            x_goal[0] = d2wall
+            x_goal[0] = d2wall  #left side of the maze
+            x_goal.append(math.pi)
+            x_final[0] = offset
+            approach_pos = [(i, x_goal[1]) for i in np.arange(x_final[0], x_goal[0], -approach_step)]
         elif armPos[1] < 0:
-            x_goal[1] = d2wall
+            x_goal[1] = d2wall  #bottom side of the maze
+            x_goal.append(-math.pi/2)
+            x_final[1] = offset
+            appraoch_pos = [(x_goal[0], i) for i in np.arange(x_final[1], x_goal[1], -approach_step)]
         elif armPos[0] > 3:
-            x_goal[0] = 3-d2wall
+            x_goal[0] = 3-d2wall    #right side of the maze
+            x_goal.append(0)
+            x_final[0] = 3-offset
+            appraoch_pos = [(i, x_goal[1]) for i in np.arange(x_goal[0], x_final[0], approach_step)]
         elif armPos[1] > 3:
-            x_goal[1] = 3-d2wall
-        x_goal = [x_goal[0]*100, 300-x_goal[1]*100]
-        x_mapGoal = self.rrt.nearest_neighbor(x_goal)
-        path = self.rrt.shortest_path(x_mapGoal)
+            x_goal[1] = 3-d2wall    #top side of the maze
+            x_goal.append(math.pi/2)
+            x_final[1] = 3-offset
+            appraoch_pos = [(x_goal[0], i) for i in np.arange(x_goal[1], x_final[1], approach_step)]
+
+        # rrt planing
+        x_pixel_goal = [x_goal[0]*100, 300-x_goal[1]*100] #convert to pixel size
+        #x_mapGoal = self.rrt.nearest_neighbor(x_pixel_goal)
+        path = self.rrt.shortest_path(x_pixel_goal)
+        for v in self.rrt.tree:
+            for u in v.neighbors:
+                self.map.draw_line((v.state[0], v.state[1]), (u.state[0], u.state[1]), (0,0,0))
         for idx in range(0, len(path)-1):
-            self.map.draw_line((path[idx].state[0], path[idx].state[1]), (path[idx+1].state[0], path[idx+1].state[1]), (0,255,0))
+            self.map.draw_line((path[idx][0], path[idx][1]), (path[idx+1][0], path[idx+1][1]), (0,255,0))
         self.map.save("fp_rrt.png")
 
         '''
@@ -174,66 +218,78 @@ class Run:
         self.odometry.y = x_init[1]
 
         base_speed = 100
-        it = 0
+        it = 0   # steps until updating PF
         prevEstimate = x_init
         for p in path:
             it+=1
-            goal_x = p.state[0] / 100.0 # conversion between px -> m
-            goal_y = 3 - p.state[1] / 100.0 ###### NOT SURE WHAT 3.35 IS
+            goal_x = p[0] / 100.0 # conversion between px -> m
+            goal_y = 3 - p[1] / 100.0 ###### NOT SURE WHAT 3.35 IS
             # print("goto_", goal_x, goal_y)
             self.go_to_goal(goal_x, goal_y)
 
             '''
             ' 2.5 - LOCALIZE
             '''
-            if it%5==0 :  # update PF every 5 pathfollows
-                print("@ [{},{}]".format(self.odometry.x, self.odometry.y))
-                distance = self.sonar.get_distance()
+            distance = self.sonar.get_distance()
+            if distance != 3.33:
                 self.pf.measure(distance, 0)
-                self.visualize()
-                est = self.pf.get_estimate()
-                print("PF estimate: ", est[0], est[1])
-                updated = False
-                # if estimated position is "close enough" to odometry (x,y)
-                # odometry (x,y) get updated to match PF estimate
-                    # close enough = 5cm apart
-                if abs(est[0]-self.odometry.x)<0.05:
-                    self.odometry.x = est[0]
-                    updated = True
-                if abs(est[1]-self.odometry.y)<0.05:
-                    self.odometry.y = est[1]
-                    updated = True
-                if updated is True:
-                    print("UPDATE ", self.odometry.x, self.odometry.y)
+            self.visualize()
+            self.update_odo(it, len(path))
 
+        '''
+        ' 2.7 - APPROACHING
+        '''
         self.create.drive_direct(0, 0)
-        self.time.sleep(10)
-
-
-'''
-        while True:
-            b = self.virtual_create.get_last_button()
-            if b == self.virtual_create.Button.MoveForward:
-                self.forward()
-                self.visualize()
-            elif b == self.virtual_create.Button.TurnLeft:
-                self.go_to_angle(self.odometry.theta + math.pi / 2)
-                self.visualize()
-            elif b == self.virtual_create.Button.TurnRight:
-                self.go_to_angle(self.odometry.theta - math.pi / 2)
-                self.visualize()
-            elif b == self.virtual_create.Button.Sense:
-                distance = self.sonar.get_distance()
-                print(distance)
+        self.take_measurements()
+        # go to final location
+        self.go_to_angle(x_goal[2])
+        self.take_measurements()
+        for x,y in appraoch_pos:
+            self.go_to_goal(x, y)
+            distance = self.sonar.get_distance()
+            if distance != 3.33:
                 self.pf.measure(distance, 0)
-                self.visualize()
+            self.visualize()
+            self.update_odo(always_update = True)
 
 
+        self.time.sleep(1)
+        print("ODO ", self.odometry.x, self.odometry.y)
+        print("Actual ", self.create.sim_get_position(), "\n")
 
-            self.arm.go_to(4, math.radians(-90))
-            self.arm.go_to(5, math.radians(90))
-            self.time.sleep(100)
+        '''
+        ' 3 - ARM Ops
+        '''
+        cup_height = 0.18
+        d2reach = 0
+        if armPos[0] < 0 or armPos[0] > 3:
+            d2reach = abs(self.odometry.x - armPos[0])  #left/right side of the maze
+        elif armPos[1] < 0 or armPos[1] > 3:
+            d2reach = abs(self.odometry.y - armPos[1])  #bottom/top side of the maze
 
+        #pass robot location to arm
+        #(y+wall-distance, cup_height)
+        self.myarm.inverse_kinematics(d2reach, cup_height)
+        self.time.sleep(2)
 
-            self.time.sleep(0.01)
-'''
+        self.arm.close_gripper()
+        self.time.sleep(6)
+
+        self.myarm.level_effector(True)
+        self.time.sleep(2)
+
+        #self.myarm.smooth_goto(0, 0)
+        #self.time.sleep(2)
+
+        #self.myarm.inverse_kinematics(0.2, 1.2, True)
+        #self.time.sleep(2)
+        self.myarm.inverse_kinematics(-0.3, 1.2, True)
+        self.time.sleep(2)
+        self.myarm.smooth_rotation(math.radians(-180))
+        self.time.sleep(2)
+        #self.myarm.inverse_kinematics(-0.25, 1.35)
+        #self.myarm.inverse_kinematics(-0.3, 0.9, True)
+        #self.time.sleep(2)
+
+        self.arm.open_gripper()
+        self.time.sleep(20)

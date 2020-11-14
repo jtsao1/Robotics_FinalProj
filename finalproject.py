@@ -11,7 +11,7 @@ import my_arm
 
 
 """ FOR GRADING"""
-armPos = [-0.35, 1.9749]  # arm(x,y)
+armPos = [3.4, 0.57]  # arm(x,y)
 
 
 
@@ -184,27 +184,23 @@ class Run:
         x_goal = armPos[:]  #goal location of rrt (x,y, theta)
         x_final = armPos[:] #goal location that is reachable from arm (x,y)
         appraoch_pos = None # an iterable that returns the approching location
-        approach_step = 0.05    #step length for each approaching step
+        approach_step = 0.1    #step length for each approaching step
         if armPos[0] < 0:
             x_goal[0] = d2wall  #left side of the maze
             x_goal.append(math.pi)  # goal theta
             x_final[0] = offset
-            appraoch_pos = [(i, x_goal[1]) for i in np.arange(x_final[0], x_goal[0], -approach_step)]
         elif armPos[1] < 0:
             x_goal[1] = d2wall  #bottom side of the maze
             x_goal.append(-math.pi/2)
             x_final[1] = offset
-            appraoch_pos = [(x_goal[0], i) for i in np.arange(x_final[1], x_goal[1], -approach_step)]
         elif armPos[0] > 3:
             x_goal[0] = 3-d2wall    #right side of the maze
             x_goal.append(0)
             x_final[0] = 3-offset
-            appraoch_pos = [(i, x_goal[1]) for i in np.arange(x_goal[0], x_final[0], approach_step)]
         elif armPos[1] > 3:
             x_goal[1] = 3-d2wall    #top side of the maze
             x_goal.append(math.pi/2)
             x_final[1] = 3-offset
-            appraoch_pos = [(x_goal[0], i) for i in np.arange(x_goal[1], x_final[1], approach_step)]
 
         # rrt planing
         x_pixel_goal = [x_goal[0]*100, 300-x_goal[1]*100] #convert to pixel size
@@ -250,7 +246,19 @@ class Run:
         self.go_to_angle(x_goal[2])
         self.take_measurements()
         self.go_to_angle(x_goal[2])
+
+        if armPos[0] < 0:
+            appraoch_pos = [(i, x_goal[1]) for i in np.arange(self.odometry.x-approach_step, x_final[0], -approach_step)]
+        elif armPos[1] < 0:
+            appraoch_pos = [(x_goal[0], i) for i in np.arange(self.odometry.y-approach_step, x_final[1], -approach_step)]
+        elif armPos[0] > 3:
+            appraoch_pos = [(i, x_goal[1]) for i in np.arange(self.odometry.x+approach_step, x_final[0], approach_step)]
+        elif armPos[1] > 3:
+            appraoch_pos = [(x_goal[0], i) for i in np.arange(self.odometry.y+approach_step, x_final[1], approach_step)]
+
+
         for x,y in appraoch_pos:
+            print("Approaching", x,y)
             self.go_to_goal(x, y)
             distance = self.sonar.get_distance()
             if distance != 3.33:
@@ -273,6 +281,7 @@ class Run:
         elif armPos[1] < 0 or armPos[1] > 3:
             d2reach = abs(self.odometry.y - armPos[1])  #bottom/top side of the maze
 
+
         #pass robot location to arm
         #(x/y+wall-distance, cup_height)
         self.myarm.inverse_kinematics(d2reach, cup_height)
@@ -283,6 +292,7 @@ class Run:
 
         self.myarm.level_effector(True)
         self.time.sleep(2)
+
 
         self.myarm.inverse_kinematics(-0.3, 1.2, True)  #shelf 2
         self.time.sleep(2)

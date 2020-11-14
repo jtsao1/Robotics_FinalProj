@@ -12,7 +12,6 @@ import my_arm
 
 """ FOR GRADING"""
 armPos = [1.60, 3.3999]  # arm(x,y)
-module_testing = True
 
 
 
@@ -276,21 +275,16 @@ class Run:
         '''
         cup_height = 0.18
         d2reach = 0     #used for inverser kinematics
-        accurate_pos = 0
         if armPos[0] < 0 or armPos[0] > 3:
             d2reach = abs(self.odometry.x - armPos[0])  #left/right side of the maze
-            accurate_pos = abs(self.create.sim_get_position()[0] - armPos[0])
         elif armPos[1] < 0 or armPos[1] > 3:
             d2reach = abs(self.odometry.y - armPos[1])  #bottom/top side of the maze
-            accurate_pos = abs(self.create.sim_get_position()[1] - armPos[1])
 
 
         #pass robot location to arm
         #(x/y+wall-distance, cup_height)
-        if(module_testing):
-            self.myarm.inverse_kinematics(d2reach, cup_height)
-        else:
-            self.myarm.inverse_kinematics(accurate_pos, cup_height)
+        self.myarm.inverse_kinematics(d2reach, cup_height)
+
         self.time.sleep(2)
 
         self.arm.close_gripper()

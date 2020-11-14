@@ -24,13 +24,19 @@ class my_arm:
 
     def inverse_kinematics(self, x_i, z_i, smooth = False):
         L1 = 0.4 # estimated using V-REP (joint2 - joint4)
-        L2 = 0.6 # estimated using V-REP (joint4 - joint6)
+        L2 = 0.59 # estimated using V-REP (joint4 - joint6)
         # Corrections for our coordinate system
         z = z_i - 0.3105
         x = x_i
         # compute inverse kinematics
         r = math.sqrt(x*x + z*z)
-        alpha = math.acos((L1*L1 + L2*L2 - r*r) / (2*L1*L2))
+        temp = (L1*L1 + L2*L2 - r*r) / (2*L1*L2)
+        if temp > 1:
+            temp = 1
+            alpha = math.acos(temp)
+        elif temp < -1:
+            temp = -1
+        alpha = math.acos(temp)
         theta2 = math.pi - alpha
 
         beta = math.acos((r*r + L1*L1 - L2*L2) / (2*L1*r))

@@ -10,6 +10,12 @@ import numpy as np
 import my_arm
 
 
+""" FOR GRADING"""
+armPos = [-0.35, 1.9749]  # arm(x,y)
+
+
+
+
 class Run:
     def __init__(self, factory):
         """Constructor.
@@ -109,7 +115,7 @@ class Run:
         data = []
         for particle in self.pf._particles:
             data.extend([particle.x, particle.y, 0.1, particle.theta])
-        #self.virtual_create.set_point_cloud(data)
+        self.virtual_create.set_point_cloud(data)
 
     def take_measurements(self):
         angle = -90
@@ -117,6 +123,7 @@ class Run:
             self.servo.go_to(angle)
             self.time.sleep(2.0)
             distance = self.sonar.get_distance()
+            self.pf.move_by(0, 0, 0)     #introduce randomness
             self.pf.measure(distance, math.radians(angle))
             self.update_odo()
             self.visualize()
@@ -171,7 +178,6 @@ class Run:
         L1 = 0.4
         L2 = 0.39
         Lgrip = 0.16
-        armPos = [1.6, 3.4]  # arm(x,y)
         # calculate x_goal for robot
         d2wall = 0.6 # set end distance to wall=0.8 (inside maze, from wall to robot)
         offset = 0.4 # set end distance to wall=0.4, where
@@ -183,7 +189,7 @@ class Run:
             x_goal[0] = d2wall  #left side of the maze
             x_goal.append(math.pi)  # goal theta
             x_final[0] = offset
-            approach_pos = [(i, x_goal[1]) for i in np.arange(x_final[0], x_goal[0], -approach_step)]
+            appraoch_pos = [(i, x_goal[1]) for i in np.arange(x_final[0], x_goal[0], -approach_step)]
         elif armPos[1] < 0:
             x_goal[1] = d2wall  #bottom side of the maze
             x_goal.append(-math.pi/2)
